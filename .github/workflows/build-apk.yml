@@ -1,0 +1,70 @@
+name: Facebook Post Manager Android APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify-test-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out build inputs
+        uses: actions/checkout@v4
+      - name: Restore and verify original source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat source.parts/source.b64.part* | base64 --decode > /tmp/fpm-source.tar.xz
+          echo '70605215b5934d968f113b20d717893bd5b7b12587d40e8232fa9130f2bf35e2  /tmp/fpm-source.tar.xz' | sha256sum -c -
+          tar -xJf /tmp/fpm-source.tar.xz
+          test -f facebook_post_manager_android/app/build.gradle.kts
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK tools
+        uses: android-actions/setup-android@v3
+      - name: Install Android SDK API 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Set up Gradle 8.10.2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Run Kotlin unit tests and build Android debug APK
+        working-directory: facebook_post_manager_android
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug
+      - name: Verify output and write SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp facebook_post_manager_android/app/build/outputs/apk/debug/app-debug.apk FacebookPostManager-Android-v0.1.0-debug.apk
+          test -s FacebookPostManager-Android-v0.1.0-debug.apk
+          sha256sum FacebookPostManager-Android-v0.1.0-debug.apk > APK-SHA256.txt
+          file FacebookPostManager-Android-v0.1.0-debug.apk
+      - name: Upload installable APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FacebookPostManager-Android-v0.1.0-debug
+          path: |
+            FacebookPostManager-Android-v0.1.0-debug.apk
+            APK-SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish download link as a prerelease
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create v0.1.0-debug \
+            FacebookPostManager-Android-v0.1.0-debug.apk APK-SHA256.txt \
+            --target "$GITHUB_SHA" \
+            --title 'Facebook Post Manager Android v0.1.0 (DEBUG)' \
+            --notes 'Debug APK for personal testing. Human-assisted Facebook publishing only; no Facebook API and no automatic submission. Not Play Store certified. Not tested on a physical device.' \
+            --prerelease
